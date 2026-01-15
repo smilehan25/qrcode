@@ -1,0 +1,187 @@
+
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>QR 코드 생성기 (안정화 버전)</title>
+<style>
+  :root{
+    --bg:#0b1320; --panel:#111a2b; --text:#e8eefc; --muted:#b5c0d8; --accent:#5aa9ff; --border:#233052;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,Apple SD Gothic Neo,Noto Sans KR,'맑은 고딕',sans-serif;
+    background:linear-gradient(135deg,#0a0f1a 0%, #0e1b32 100%); color:var(--text);
+    min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px;
+  }
+  .app{ width:min(980px,100%); background:rgba(17,26,43,.86); border:1px solid var(--border); border-radius:16px; box-shadow:0 20px 60px rgba(0,0,0,.4); overflow:hidden; }
+  header{ padding:18px 22px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
+  header h1{ font-size:18px; margin:0; font-weight:700; }
+  .pill{ padding:6px 10px; border:1px solid var(--border); border-radius:999px; color:var(--muted); font-size:12px }
+  .container{ display:grid; grid-template-columns:1.2fr 1fr; }
+  .left,.right{ padding:18px 22px; }
+  .section{ margin-bottom:16px }
+  .label{ font-size:12px; color:var(--muted); margin-bottom:6px }
+  textarea,input,select{ width:100%; border:1px solid var(--border); background:#0c1426; color:var(--text); border-radius:10px; padding:12px; font-size:14px; outline:none; }
+  textarea{ min-height:104px; resize:vertical }
+  .row-3{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px }
+  .row-2{ display:grid; grid-template-columns:1fr 1fr; gap:12px }
+  button{ background:var(--accent); border:none; color:#00122b; padding:10px 14px; border-radius:10px; font-weight:700; cursor:pointer; box-shadow:0 6px 16px rgba(90,169,255,.3); }
+  button.secondary{ background:#0c1426; color:var(--text); border:1px solid var(--border); box-shadow:none; }
+  .qr-wrap{ display:flex; align-items:center; justify-content:center; background:#0c1426; border:1px dashed var(--border); border-radius:12px; min-height:360px; position:relative; }
+  .qr-wrap canvas, .qr-wrap img{ max-width:100%; height:auto }
+  .hint{ position:absolute; bottom:10px; left:50%; transform:translateX(-50%); color:var(--muted); font-size:12px; }
+  .error{ color:#ffb3b3; font-size:13px; margin-top:8px; min-height:18px }
+  @media (max-width:900px){ .container{ grid-template-columns:1fr } }
+</style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>QR 코드 생성기</h1>
+      <span class="pill">실시간 미리보기</span>
+    </header>
+
+    <div class="container">
+      <div class="left">
+        <div class="section">
+          <div class="label">내용(텍스트/URL)</div>
+          <textarea id="text" placeholder="예) https://naver.com 또는 임의의 텍스트"></textarea>
+          <div id="err" class="error"></div>
+        </div>
+
+        <div class="section row-3">
+          <div>
+            <div class="label">크기(px)</div>
+            <input id="size" type="number" min="120" max="1200" step="10" value="320" />
+          </div>
+          <div>
+            <div class="label">여백(border)</div>
+            <input id="margin" type="number" min="0" max="16" step="1" value="4" />
+          </div>
+          <div>
+            <div class="label">오류 정정(EC)</div>
+            <select id="ec">
+              <option value="M" selected>M (15%)</option>
+              <option value="L">L (7%)</option>
+              <option value="Q">Q (25%)</option>
+              <option value="H">H (30%)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="section row-2">
+          <div>
+            <div class="label">전경색</div>
+            <input id="fg" type="color" value="#000000" />
+          </div>
+          <div>
+            <div class="label">배경색</div>
+            <input id="bg" type="color" value="#ffffff" />
+          </div>
+        </div>
+
+        <div class="section" style="display:flex;gap:10px;flex-wrap:wrap;">
+          <button id="btnGenerate" type="button">생성</button>
+          <button id="btnDownload" type="button" class="secondary">PNG 다운로드</button>
+          <button id="btnClear" type="button" class="secondary">초기화</button>
+        </div>
+      </div>
+
+      <div class="right">
+        <div id="preview" class="qr-wrap">
+          <div id="qrcode"></div>
+          <div class="hint">텍스트 입력 후 [생성] 또는 좌측 값 변경 시 자동 업데이트</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="padding:10px 22px; border-top:1px solid var(--border); color:#90a0c0; font-size:12px;">
+      © 2026 QR Generator
+    </div>
+  </div>
+
+  <!-- qrcodejs: SRI/무결성 해시 제거 및 crossorigin 해제 (차단 방지) -->
+  https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js</script>
+  <script>
+    const $ = (s)=>document.querySelector(s);
+    const err = $("#err");
+    let qrInstance = null;
+
+    function ecLevel(v){
+      const map = {L: QRCode.CorrectLevel.L, M: QRCode.CorrectLevel.M, Q: QRCode.CorrectLevel.Q, H: QRCode.CorrectLevel.H};
+      return map[v] ?? QRCode.CorrectLevel.M;
+    }
+
+    function showError(msg){
+      err.textContent = msg || "";
+    }
+
+    function makeQR(){
+      try{
+        showError("");
+        if(typeof QRCode === "undefined" || !QRCode){
+          showError("QRCode 라이브러리가 로드되지 않았습니다. 인터넷 연결 또는 스크립트 URL을 확인하세요.");
+          return;
+        }
+        const text = $("#text").value.trim();
+        const size = Math.max(120, Math.min(1200, parseInt($("#size").value||320,10)));
+        const margin = Math.max(0, Math.min(16, parseInt($("#margin").value||4,10)));
+        const level = $("#ec").value;
+        const fg = $("#fg").value || "#000000";
+        const bg = $("#bg").value || "#ffffff";
+
+        $("#qrcode").innerHTML = "";
+        if(!text){ return; }
+
+        qrInstance = new QRCode(document.getElementById("qrcode"), {
+          text: text,
+          width: size, height: size,
+          colorDark: fg, colorLight: bg,
+          correctLevel: ecLevel(level)
+        });
+
+        // qrcodejs는 내부 여백 옵션이 없어, CSS 여백 대신 배경 박스 패딩으로 대체
+        document.querySelector(".qr-wrap").style.padding = (margin*4) + "px";
+      }catch(e){
+        console.error(e);
+        showError("생성 중 오류가 발생했습니다: " + (e.message || e));
+      }
+    }
+
+    function downloadPNG(){
+      if(!qrInstance){
+        makeQR(); // 필요시 생성 시도
+      }
+      const canvas = $("#qrcode canvas");
+      const img = $("#qrcode img");
+      const source = canvas ? canvas.toDataURL("image/png") : (img ? img.src : null);
+      if(!source){ alert("먼저 QR 코드를 생성하세요."); return; }
+      const a = document.createElement("a");
+      a.href = source; a.download = "qrcode.png"; a.click();
+    }
+
+    function clearAll(){
+      $("#text").value = "";
+      $("#qrcode").innerHTML = "";
+      showError("");
+    }
+
+    // 이벤트
+    $("#btnGenerate").addEventListener("click", makeQR);
+    $("#btnDownload").addEventListener("click", downloadPNG);
+    $("#btnClear").addEventListener("click", clearAll);
+
+    // 실시간 미리보기
+    ["#text","#size","#margin","#ec","#fg","#bg"].forEach(sel=>{
+      $(sel).addEventListener("input", makeQR);
+      $(sel).addEventListener("change", makeQR);
+    });
+
+    // 초기 값
+    $("#text").value = "https://www.naver.com";
+    makeQR();
+  </script>
+</body>
+</html>
